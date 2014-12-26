@@ -105,7 +105,8 @@ void draw()
     img.copy(cam, 
       cam.width/2-width/2, cam.height/2-height/2, width, height, 
       0, 0, width, height);
-    img.filter(THRESHOLD, 0.5);
+    img.filter(GRAY);
+    img.filter(THRESHOLD, 0.25);
 
 
     pushMatrix();
@@ -169,8 +170,8 @@ void draw()
   // adjust mouse position
   float threshold = 1;
   float s = displayWidth/64;
-  mousePos.x -= mouseRate * gyro.y + ( (avgx-prevx) ) * q / responseTime / frameRate;
-  mousePos.y -= mouseRate * gyro.x - ( (avgy-prevy) ) * q / responseTime / frameRate;
+  mousePos.x -= mouseRate * gyro.y + pow( (avgx-prevx) / responseTime / frameRate, 3);
+  mousePos.y -= mouseRate * gyro.x - pow( (avgy-prevy) * 2 / responseTime / frameRate, 3);
   if (mousePos.x < 0) mousePos.x = 0;
   if (mousePos.x >= (displayWidth - 1) ) mousePos.x = displayWidth - 1;
   if (mousePos.y < 0) mousePos.y = 0;
