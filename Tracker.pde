@@ -1,7 +1,7 @@
 // by Les Hall
 // started Sun Nov 9 2014
 // from oscP5 examples
-// 
+// added head Tracking onWed Dec 24 2014
 
 
 import oscP5.*;
@@ -18,7 +18,6 @@ java.awt.Robot robo;
 Capture cam;
 Detector bd;
 
-
 float responseTime = 2.0;
 float mouseRate = 8.0;
 PVector blob = new PVector(0, 0, 0);
@@ -31,17 +30,33 @@ int numButtons = 9;
 boolean[] button = new boolean[9];
 PVector mousePos = new PVector(0, 0, 0);
 PImage img;
-float avgx = 0;
-float avgy = 0;
-float prevx = 0;
-float prevy = 0;
-float q = 8;  // size of window
+PVector pos = new PVector(0, 0, 0);
+PVector ref = new PVector(0, 0, 0);
+float threshold = 0.5;
+int blur = 2;
+boolean inverse = false;
+float f = 25;
+PVector[] UIlocations = {
+  new PVector(0, 0*f, 0), 
+  new PVector(0, 1*f, 0), 
+  new PVector(0, 2*f, 0), 
+  new PVector(0, 3*f, 0), 
+  new PVector(0, 4*f, 0), 
+  new PVector(0, 5*f, 0), 
+  new PVector(0, 6*f, 0)};
+int UIpointer = 0;
+float tau0 = 0.7;
+float tau1 = 0.95;
+boolean firstRun = true;
+int size = 300;
+int k = size/16;
+PVector invert = new PVector(1, 1, 0);
 
 
 void setup()
 {
-  size(256, 256);
-  //frameRate(15);
+  size(3*size, size);
+  frameRate(15);
     
   /* start oscP5, listening for incoming messages */
   oscP5 = new OscP5(this, 11000);
@@ -88,33 +103,48 @@ void setup()
     cam.start();
   }
   
-  img = new PImage(width, height);  
+  img = new PImage(size, size);  
 
-  bd = new Detector(this);
+  bd = new Detector(this, 0);
 }
 
 
 void draw()
 {
-  background(0); 
+  if (firstRun)
+  {
+    frame.setLocation(displayWidth/2 - width/2, displayHeight/2 - height/2);
+    firstRun = false;
+  }
+  background(63, 0, 127); 
  
   // get a camera image
   if (cam.available() == true)
   {
     cam.read();
     img.copy(cam, 
-      cam.width/2-width/2, cam.height/2-height/2, width, height, 
-      0, 0, width, height);
+      cam.width/2-img.width/2, cam.height/2-img.height/2, img.width, img.height, 
+      0, 0, img.width, img.height);
+      
+    //bd.setThreshold( int(255*threshold) );
     img.filter(GRAY);
-    img.filter(THRESHOLD, 0.25);
+    img.filter(BLUR, blur);
+    img.filter(THRESHOLD,  threshold);
 
+    if (inverse)
+      for (int i=0; i<img.pixels.length; ++i)
+        img.pixels[i] = color(255, 255, 255) - img.pixels[i];      
+    
+    img.loadPixels();
 
+    // plot image
     pushMatrix();
+      translate(size, 0);
       scale(-1.0, 1.0);
       image(img, -img.width, 0);
     popMatrix();
     
-    img.loadPixels();
+    drawUserInterface();
     
     // scan for blobs
     bd.imageFindBlobs(img);  // find the blobs
@@ -124,54 +154,63 @@ void draw()
 
     // calculate average head motion
     int numBlobs = bd.getBlobsNumber();
-    float prevtau = 1.0/frameCount;
-    prevx = prevtau*prevx + (1.0-prevtau)*avgx;
-    prevy = prevtau*prevy + (1.0-prevtau)*avgy;
-    prevx = 0;
-    prevy = 0;
-    float x = 0;
-    float y = 0;
-    int k = height/32;
-    for (int i=0; i<numBlobs; ++i)
+    if (numBlobs > 0)
     {
-      float bdx = bd.getCentroidX(i);
-      float bdy = bd.getCentroidY(i);
-      float dx = (bdx - width/2);
-      float dy = (bdy - height/2);
-      x += dx;
-      y += dy;
-      // plot blob centroids    
-      fill(0, 255, 0);
-      ellipse(width-1 - bd.getCentroidX(i), bd.getCentroidY(i), k, k);
-    } 
-    x /= numBlobs;
-    y /= numBlobs;
-    float tau = 0.0;
-    avgx = tau*avgx + (1.0-tau)*x;
-    avgy = tau*avgy + (1.0-tau)*y;
+      float x = 0;
+      float y = 0;
+      int counter = 0;
+      for (int i=0; i<numBlobs; ++i)
+      {
+        // get blob features
+        float bdx = bd.getCentroidX(i);
+        float bdy = bd.getCentroidY(i);
+        
+        if ( (bdx >= 0) && (bdx < img.width) && 
+          (bdy >=0) && (bdy < img.height) )
+        {
+          // make calculations
+          x += bdx;
+          y += bdy;
+          ++counter;
+          
+          // plot blob centroids    
+          pushMatrix();
+            fill(0, 255, 0, 63);
+            ellipse(size + img.width-1 - bdx, bdy, k, k);
+          popMatrix();
+        }
+        
+      } 
+      if (counter > 0)
+      {
+        x /= counter;
+        y /= counter;
+    
+        // keep running averages of position and reference
+        pos.x = tau0*pos.x + (1.0-tau0)*x;
+        pos.y = tau0*pos.y + (1.0-tau0)*y;
+        ref.x = tau1*ref.x + (1.0-tau1)*pos.x;
+        ref.y = tau1*ref.y + (1.0-tau1)*pos.y;
+      }
+    }
 
     // plot dots
     //
-    // plot long running average
-    fill(255, 0, 255);
-    ellipse(width/2 - prevx, height/2 + prevy, 2*k, 2*k);
-    //
-    // plot short running average
-    fill(0, 255, 255);
-    ellipse(width/2 - avgx, height/2 + avgy, 2*k, 2*k);
-    //
-    // plot mouse indicator in yellow
-    float wx = float(width)/float(displayWidth);
-    float wy = float(height)/float(displayHeight);
-    fill(255, 255, 0);
-    ellipse(wx*mousePos.x, wy*mousePos.y, 2*k, 2*k);
+    pushMatrix();
+      // 
+      // plot long running average
+      fill(255, 0, 255);
+      ellipse(size + img.width-1 - ref.x, ref.y, k, k);
+      //
+      // plot short running average
+      fill(0, 255, 255);
+      ellipse(size + img.width-1 - pos.x, pos.y, k, k);
+    popMatrix();
   }
   
   // adjust mouse position
-  float threshold = 1;
-  float s = displayWidth/64;
-  mousePos.x -= mouseRate * gyro.y + pow( (avgx-prevx) / responseTime / frameRate, 3);
-  mousePos.y -= mouseRate * gyro.x - pow( (avgy-prevy) * 2 / responseTime / frameRate, 3);
+  mousePos.x += invert.x * (-mouseRate * gyro.y - (pos.x - ref.x) );
+  mousePos.y += invert.y * (-mouseRate * gyro.x + (pos.y - ref.y) );
   if (mousePos.x < 0) mousePos.x = 0;
   if (mousePos.x >= (displayWidth - 1) ) mousePos.x = displayWidth - 1;
   if (mousePos.y < 0) mousePos.y = 0;
@@ -201,6 +240,182 @@ void draw()
   }
 }
 
+
+
+
+void keyPressed()
+{
+  if (key == CODED)
+  {
+    if (keyCode == UP)
+    {
+      --UIpointer;
+      if (UIpointer < 0)
+        UIpointer = UIlocations.length - 1;
+    }
+    else if (keyCode == DOWN)
+    {
+      ++UIpointer;
+      UIpointer %= UIlocations.length;
+    }
+    else if (UIpointer == 0)
+    {
+      if (keyCode == RIGHT)
+      {
+        threshold += 0.05;
+        threshold = round(20 * threshold) / 20.0;
+        if (threshold > 1)
+          threshold = 1;
+      }
+      if (keyCode == LEFT)
+      {
+        threshold -= 0.05;
+        threshold = round(20 * threshold) / 20.0;
+        if (threshold < 0)
+          threshold = 0;
+      }
+    }
+    else if (UIpointer == 1)
+    {
+      if (keyCode == RIGHT)
+      {
+        blur += 1;
+        if (blur > 16)
+          blur = 16;
+      }
+      if (keyCode == LEFT)
+      {
+        blur -= 1;
+        if (blur < 0)
+          blur = 0;
+      }
+    }
+    else if (UIpointer == 2)
+    {
+      if (keyCode == RIGHT)
+      {
+        inverse = true;
+      }
+      if (keyCode == LEFT)
+      {
+        inverse = false;
+      }
+    }
+    else if (UIpointer == 3)
+    {
+      if (keyCode == RIGHT)
+      {
+        tau0 += 0.05;
+        tau0 = round(20 * tau0) / 20.0;
+        if (tau0 > 1)
+          tau0 = 1;
+      }
+      if (keyCode == LEFT)
+      {
+        tau0 -= 0.05;
+        tau0 = round(20 * tau0) / 20.0;
+        if (tau0 < 0)
+          tau0 = 0;
+      }
+    }
+    else if (UIpointer == 4)
+    {
+      if (keyCode == RIGHT)
+      {
+        tau1 += 0.05;
+        tau1 = round(20 * tau1) / 20.0;
+        if (tau1 > 1)
+          tau1 = 1;
+      }
+      if (keyCode == LEFT)
+      {
+        tau1 -= 0.05;
+        tau1 = round(20 * tau1) / 20.0;
+        if (tau1 < 0)
+          tau1 = 0;
+      }
+    }
+    else if (UIpointer == 5)
+    {
+      if (keyCode == RIGHT)
+      {
+        invert.x = 1;
+      }
+      if (keyCode == LEFT)
+      {
+        invert.x = -1;
+      }
+    }
+    else if (UIpointer == 6)
+    {
+      if (keyCode == RIGHT)
+      {
+        invert.y = 1;
+      }
+      if (keyCode == LEFT)
+      {
+        invert.y = -1;
+      }
+    }
+  }
+  else
+  {
+  }
+}
+
+
+
+
+void drawUserInterface()
+{
+  // draw parameters
+  textSize(f);
+  pushMatrix();
+    translate(2*size, 0);  
+    textAlign(LEFT, TOP);
+    fill(0, 255, 0);
+    if (UIpointer == 0) fill(255, 0, 0);
+    text("threshold = " + str(threshold), 
+      UIlocations[0].x, UIlocations[0].y);
+    fill(0, 255, 0);
+    if (UIpointer == 1) fill(255, 0, 0);
+    text("blur = " + str(blur), 
+      UIlocations[1].x, UIlocations[1].y);
+    fill(0, 255, 0);
+    if (UIpointer == 2) fill(255, 0, 0);
+    text("inverse = " + str(inverse), 
+      UIlocations[2].x, UIlocations[2].y);
+    fill(0, 255, 0);
+    if (UIpointer == 3) fill(255, 0, 0);
+    text("tau0 = " + str(tau0), 
+      UIlocations[3].x, UIlocations[3].y);
+    fill(0, 255, 0);
+    if (UIpointer == 4) fill(255, 0, 0);
+    text("tau1 = " + str(tau1), 
+      UIlocations[4].x, UIlocations[4].y);
+    fill(0, 255, 0);
+    if (UIpointer == 5) fill(255, 0, 0);
+    text("invert x = " + str(invert.x), 
+      UIlocations[5].x, UIlocations[5].y);
+    fill(0, 255, 0);
+    if (UIpointer == 6) fill(255, 0, 0);
+    text("invert y = " + str(invert.y), 
+      UIlocations[6].x, UIlocations[6].y);
+  popMatrix();
+
+  // draw instructions  
+  pushMatrix();
+    translate(0, 0); 
+    textAlign(LEFT, TOP);
+    fill(255, 255, 0);
+    text("use arrows keys to", 
+      0, 0);
+    text("select and change", 
+      0, f);
+    text("red values", 
+      0, 2*f);
+  popMatrix();
+}
 
 
 
