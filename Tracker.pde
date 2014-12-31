@@ -20,7 +20,7 @@ Capture cam;
 Detector bd;
 
 float responseTime = 2.0;
-float mouseRate = 8.0;
+float gyroRate = 8.0;
 PVector blob = new PVector(0, 0, 0);
 PVector blobAvg = new PVector(0, 0, 0);
 PVector gyro = new PVector(0, 0, 0);
@@ -54,8 +54,8 @@ int k = size/16;
 PVector invert = new PVector(1, 1, 0);
 String[] cameras;
 int camSelection = 3;
-
-
+// 
+// chat variables
 String url;
 String chatFile;
 String[] chat;
@@ -177,40 +177,16 @@ void draw()
     bd.findCentroids();  // get center of blobs
     bd.weightBlobs(true);  /// get size of blobs
 
+    // make sure there are some blobs and find out how many
     int numBlobs = bd.getBlobsNumber();
     if (numBlobs > 0)
     {
-      // calculate average head motion
-      float x = 0;
-      float y = 0;
-      int counter = 0;
-      for (int i=0; i<numBlobs; ++i)
-      {
-        // get blob features
-        float bdx = bd.getCentroidX(i);
-        float bdy = bd.getCentroidY(i);
-        
-        if ( (bdx >= 0) && (bdx < img.width) && 
-          (bdy >=0) && (bdy < img.height) )
-        {
-          // make calculations
-          x += bdx;
-          y += bdy;
-          ++counter;
-          
-          // plot blob centroids    
-          pushMatrix();
-            fill(0, 255, 0, 127);
-            ellipse(size + img.width-1 - bdx, bdy, k, k);
-          popMatrix();
-        }
-        
-      } 
-
       // look for two blobs side by side of similar mass
-      float lowestScore = width;
+      float lowestScore = 360 * width;
       float bestX = 0;
       float bestY = 0;
+      float bestTheta = 0;
+      float bestDistance = 0;
       for (int i=0; i<numBlobs; ++i)
       {
         for (int j=i; j<numBlobs; ++j)
@@ -234,61 +210,62 @@ void draw()
             float dy = jy - iy;
             float theta = atan2(dy, dx);
             float distance = sqrt(dx*dx + dy*dy);
-            float score = abs( 
-              theta * 
-              abs(distance - img.width/4) * 
-              abs( (width/2 - ix) * (jx - width/2) ) * 
-              abs( (height/4 - iy) * (height/4 - jy) )
+            float score = ( 
+              abs( (180/PI) * theta) +                 // low angle
+              abs(distance - img.width/3)  // eye spacing
             );
             score = score * score;
   
             // save lowest score
             if (score < lowestScore)
             {
-              bestX = (ix + ix) / 2.0;
+              bestX = (ix + jx) / 2.0;
               bestY = (iy + jy) / 2.0;
+              bestTheta = theta;
+              bestDistance = distance;
               lowestScore = score;
             }
           }
-        }
-      }
           
-      // plot blob centroids    
-      pushMatrix();
-        fill(255, 255, 0, 127);
-        ellipse(size + img.width-1 - bestX, bestY, img.width/4, k);
-      popMatrix();
-
-      if (counter > 0)
-      {
-        x /= counter;
-        y /= counter;
-    
-        // keep running averages of position and reference
-        pos.x = tau0*pos.x + (1.0-tau0)*bestX;
-        pos.y = tau0*pos.y + (1.0-tau0)*bestY;
-        ref.x = tau1*ref.x + (1.0-tau1)*pos.x;
-        ref.y = tau1*ref.y + (1.0-tau1)*pos.y;
+          // plot blob centroids    
+          pushMatrix();
+            fill(0, 255, 0, 127);
+            ellipse(size + img.width-1 - ix, iy, k, k);
+          popMatrix();
+        }
+          
+        // plot eyes
+        pushMatrix();
+          fill(0, 255, 0, 127);
+          rotate(bestTheta);
+          ellipse(size + img.width-1 - bestX, bestY, bestDistance, k);
+        popMatrix();
       }
-    }
 
-    // plot dots
-    //
-    pushMatrix();
-      // 
-      // plot long running average
-      fill(255, 0, 255);
-      ellipse(size + img.width-1 - ref.x, ref.y, k, k);
+      // keep running averages of position and reference
+      pos.x = tau0*pos.x + (1.0-tau0)*bestX;
+      pos.y = tau0*pos.y + (1.0-tau0)*bestY;
+      ref.x = tau1*ref.x + (1.0-tau1)*pos.x;
+      ref.y = tau1*ref.y + (1.0-tau1)*pos.y;
+
+      // plot dots
       //
-      // plot short running average
-      fill(0, 255, 255);
-      ellipse(size + img.width-1 - pos.x, pos.y, k, k);
-    popMatrix();
+      pushMatrix();
+        // 
+        // plot long running average
+        fill(255, 0, 255);
+        ellipse(size + img.width-1 - ref.x, ref.y, k, k);
+        //
+        // plot short running average
+        fill(0, 255, 255);
+        ellipse(size + img.width-1 - pos.x, pos.y, k, k);
+      popMatrix();
+    }
   }
   
   // adjust mouse position
-  mousePos.x += invert.x * (-mouseRate * gyro.y - (pos.x - ref.x) );
-  mousePos.y += invert.y * (-mouseRate * gyro.x + (pos.y - ref.y) );
+  mousePos.x += invert.x * (-gyroRate * gyro.y - (pos.x - ref.x) );
+  mousePos.y += invert.y * (-gyroRate * gyro.x + (pos.y - ref.y) );
   if (mousePos.x < 0) mousePos.x = 0;
   if (mousePos.x >= (displayWidth - 1) ) mousePos.x = displayWidth - 1;
   if (mousePos.y < 0) mousePos.y = 0;
@@ -343,7 +320,6 @@ void camSelect()
     }
   popMatrix();
 }
-
 
 
 
