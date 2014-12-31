@@ -10,6 +10,7 @@ import java.awt.*;
 import java.awt.event.InputEvent;
 import processing.video.*;
 import blobscanner.*;
+import http.requests.*;
 
 
 OscP5 oscP5;
@@ -51,12 +52,26 @@ boolean firstRun = true;
 int size = 300;
 int k = size/16;
 PVector invert = new PVector(1, 1, 0);
+String[] cameras;
+int camSelection = 3;
+
+
+String url;
+String chatFile;
+String[] chat;
+int numChatDisplayLines;
+int fontSize;
+String line;
+
+
+
+
 
 
 void setup()
 {
   size(3*size, size);
-  frameRate(15);
+  //frameRate(15);
     
   /* start oscP5, listening for incoming messages */
   oscP5 = new OscP5(this, 11000);
@@ -72,7 +87,7 @@ void setup()
     e.printStackTrace();
   }
   
-  String[] cameras = Capture.list();
+  cameras = Capture.list();
 
   if (cameras == null)
   {
@@ -106,7 +121,16 @@ void setup()
   img = new PImage(size, size);  
 
   bd = new Detector(this, 0);
-}
+
+  url = "http://104.236.124.110/";
+
+  chatFile = "SLchat.txt";
+  chat = new String[0];
+  
+  numChatDisplayLines = 7;
+  fontSize = 14;
+  line = "";
+  }
 
 
 void draw()
@@ -145,6 +169,7 @@ void draw()
     popMatrix();
     
     drawUserInterface();
+    //camSelect();
     
     // scan for blobs
     bd.imageFindBlobs(img);  // find the blobs
@@ -152,10 +177,10 @@ void draw()
     bd.findCentroids();  // get center of blobs
     bd.weightBlobs(true);  /// get size of blobs
 
-    // calculate average head motion
     int numBlobs = bd.getBlobsNumber();
     if (numBlobs > 0)
     {
+      // calculate average head motion
       float x = 0;
       float y = 0;
       int counter = 0;
@@ -175,20 +200,73 @@ void draw()
           
           // plot blob centroids    
           pushMatrix();
-            fill(0, 255, 0, 63);
+            fill(0, 255, 0, 127);
             ellipse(size + img.width-1 - bdx, bdy, k, k);
           popMatrix();
         }
         
       } 
+
+      // look for two blobs side by side of similar mass
+      float lowestScore = width;
+      float bestX = 0;
+      float bestY = 0;
+      for (int i=0; i<numBlobs; ++i)
+      {
+        for (int j=i; j<numBlobs; ++j)
+        {
+          // get blob features
+          float ix = bd.getCentroidX(i);
+          float iy = bd.getCentroidY(i);
+          float jx = bd.getCentroidX(j);
+          float jy = bd.getCentroidY(j);
+        
+          // only check blobs in image
+          if ( 
+            (ix >= 0) && (ix < img.width) && 
+            (iy >= 0) && (iy < img.height) &&
+            (jx >= 0) && (jx < img.width) && 
+            (jy >= 0) && (jy < img.height)
+          )
+          {
+            // calculate blob score
+            float dx = jx - ix;
+            float dy = jy - iy;
+            float theta = atan2(dy, dx);
+            float distance = sqrt(dx*dx + dy*dy);
+            float score = abs( 
+              theta * 
+              abs(distance - img.width/4) * 
+              abs( (width/2 - ix) * (jx - width/2) ) * 
+              abs( (height/4 - iy) * (height/4 - jy) )
+            );
+            score = score * score;
+  
+            // save lowest score
+            if (score < lowestScore)
+            {
+              bestX = (ix + ix) / 2.0;
+              bestY = (iy + jy) / 2.0;
+              lowestScore = score;
+            }
+          }
+        }
+      }
+          
+      // plot blob centroids    
+      pushMatrix();
+        fill(255, 255, 0, 127);
+        ellipse(size + img.width-1 - bestX, bestY, img.width/4, k);
+      popMatrix();
+
       if (counter > 0)
       {
         x /= counter;
         y /= counter;
     
         // keep running averages of position and reference
-        pos.x = tau0*pos.x + (1.0-tau0)*x;
-        pos.y = tau0*pos.y + (1.0-tau0)*y;
+        pos.x = tau0*pos.x + (1.0-tau0)*bestX;
+        pos.y = tau0*pos.y + (1.0-tau0)*bestY;
         ref.x = tau1*ref.x + (1.0-tau1)*pos.x;
         ref.y = tau1*ref.y + (1.0-tau1)*pos.y;
       }
@@ -238,6 +316,32 @@ void draw()
     robo.mousePress(InputEvent.BUTTON3_MASK);
     robo.mouseRelease(InputEvent.BUTTON3_MASK);
   }
+  
+  
+  chat = getChat(url, chatFile);
+  if (chat.length > 0)
+    drawChat(chat);
+}
+
+
+
+
+void camSelect()
+{
+  //cameras = Capture.list();
+  int ts = height / cameras.length/2;
+  textSize(ts);
+  pushMatrix();
+    fill(255, 255, 0);
+    text("tab select camera", 0, height-ts);
+    for (int i=0; i<cameras.length; ++i)
+    {
+      fill(0, 255, 0);
+      if (camSelection == i)
+        fill(255, 0, 0);  
+      text(cameras[i], 0, i*ts);
+    }
+  popMatrix();
 }
 
 
@@ -360,6 +464,20 @@ void keyPressed()
   }
   else
   {
+      if (key ==  8)
+      {
+        if (line.length() > 0)
+          line = line.substring(0, line.length()-1);
+      }
+      else if ( (key == 13) || (key == 10) )
+      {
+        chat = append(chat, line);
+        String temp = line;
+        line = "";
+        saveChat(url, temp);
+      }
+      else
+        line += str(key);
   }
 }
 
@@ -405,15 +523,12 @@ void drawUserInterface()
 
   // draw instructions  
   pushMatrix();
-    translate(0, 0); 
+    translate(2*size, 0); 
     textAlign(LEFT, TOP);
+    textSize(12);
     fill(255, 255, 0);
-    text("use arrows keys to", 
-      0, 0);
-    text("select and change", 
-      0, f);
-    text("red values", 
-      0, 2*f);
+    text("use arrows keys to select and change red values", 
+      0, height-12);
   popMatrix();
 }
 
@@ -451,4 +566,34 @@ void oscEvent(OscMessage theOscMessage)
     button[theOscMessage.get(0).intValue()-1] = true;
   }
 }
+
+String[] getChat(String url, String phpFile)
+{
+  String[] txt = loadStrings(url + phpFile);
+  for (int i=0; i<txt.length; ++i)
+    txt[i] = join( split(txt[i], "%20"), " ");
+  return txt;
+}
+  
+void drawChat(String[] chat)
+{
+  textSize(fontSize);
+  textAlign(BOTTOM, LEFT);
+  int size = min(numChatDisplayLines, chat.length);
+  for (int i=0; i<size; ++i)
+    text(chat[chat.length-1-i], 0, height - fontSize*(i+2));
+  text(line, 0, height - fontSize);
+} 
+
+
+void saveChat(String url, String txt)
+{
+  String[] list = split(txt, ' ');
+  txt = join(list, "%20");
+  PostRequest post = new PostRequest(url + "index.php");
+  post.addData("param1", "chat");
+  post.addData("param2", txt);
+  post.send();
+}
+
 
